@@ -13,8 +13,17 @@ WriteMakefile(
     PL_FILES            => {},
     PREREQ_PM => {
         'Test::More' => 0,
+        'Hash::Merge' => 0,
+        'YAML::Syck' => 0,
+        'Class::Accessor::Fast' => 0,
+        'WWW::Plurk' => 0,
+        'Net::Jaiku' => 0,
+        'Net::Twitter' => 0,
+        'Class::Accessor::Fast' => 0,
+		'Text::Table' => 0,
+        'Number::RecordLocator' => 0,
     },
-    EXE_FILES => [<bin/*>] ,
+    EXE_FILES => [<bin/jaipo>] ,
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'Jaipo-*' },
 );

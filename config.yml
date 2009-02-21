@@ -1,0 +1,33 @@
+--- 
+application: 
+  Plugins: {}
+
+  SavePassword: 0
+  Services: 
+    - 
+      Twitter: 
+        clientname: Jaipo.pm
+        clienturl: http://jaipo.org/
+        clientver: 0.001
+        enable: 0
+        password: 0903neo
+        source: jaipopm
+        sp_id: IAY4
+        trigger_name: twitter
+        useragent: jaipopm
+        username: c9s
+    - 
+      Twitter: 
+        clientname: Jaipo.pm
+        clienturl: http://jaipo.org/
+        clientver: 0.001
+        enable: 0
+        password: 0903neo
+        source: jaipopm
+        sp_id: ICT6
+        trigger_name: twitter_
+        useragent: jaipopm
+        username: lya_
+  Verbose: 1
+user: {}
+

@@ -1,0 +1,22 @@
+--- #YAML:1.0
+name:                Jaipo
+version:             0.02
+abstract:            Jaiku (and other micro-blogging sites) Client
+license:             GPL
+author:              
+    - BlueT <bluet@blue.org>, Cornelius <cornelius.howl@gmail.com>
+generated_by:        ExtUtils::MakeMaker version 6.42
+distribution_type:   module
+requires:     
+    Class::Accessor::Fast:         0
+    Hash::Merge:                   0
+    Net::Jaiku:                    0
+    Net::Twitter:                  0
+    Number::RecordLocator:         0
+    Test::More:                    0
+    Text::Table:                   0
+    WWW::Plurk:                    0
+    YAML::Syck:                    0
+meta-spec:
+    url:     http://module-build.sourceforge.net/META-spec-v1.3.html
+    version: 1.3

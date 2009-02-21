@@ -1,24 +1,31 @@
 package Jaipo;
-
 use warnings;
 use strict;
+use feature qw(:5.10);
+use Jaipo::Config;
+use Jaipo::Logger;
+use base qw/Class::Accessor::Fast/;
+__PACKAGE__->mk_accessors (qw/config/);
+
+use vars qw/$CONFIG $LOGGER $HANDLER $PUB_SUB @PLUGINS @SERVICES/;
+
+=encoding utf8
 
 =head1 NAME
 
-Jaipo - JAIku (and other micro-blogging sites) POster
+Jaipo - Jaiku (and other micro-blogging sites) Client
 
 =head1 VERSION
 
-Version 0.01
+Version 0.02
 
 =cut
 
-our $VERSION = '0.01';
-
+our $VERSION = '0.02';
 
 =head1 DESCRIPTION
 
-Jaipo (宅噗)
+Jaipo ( 宅噗 )
 
 This project was starting for Jaiku.com, but now going to support as-much-as-we-can micro-blogging sites.
 
@@ -30,9 +37,466 @@ Bcoz it's writen in perl, so it can run on any OS and any machine with perl. I g
 
 Now you can read feeds, send message, and set location with Jaipo.
 
-=head1 EXPORT
+=cut
 
+=head1 FUNCTIONS
 
+=head2 new
+
+=cut
+
+sub new {
+	my $class = shift;
+	my %args  = @_;
+	my $self  = {};
+
+	bless $self, $class;
+	return $self;
+}
+
+=head2 config
+
+return L<Jaipo::Config>
+
+=cut
+
+sub config {
+	my $class = shift;
+	$CONFIG = shift if (@_);
+	$CONFIG ||= Jaipo::Config->new ();
+	return $CONFIG;
+}
+
+=head2 services
+
+=cut
+
+sub services {
+	my $class = shift;
+	@SERVICES = @_ if @_;
+	return @SERVICES;
+}
+
+sub logger {
+	my $class = shift;
+	$LOGGER = shift if (@_);
+	return $LOGGER;
+}
+
+=head2 init 
+
+=cut
+
+sub init {
+	my $self   = shift;
+	my $caller = shift;
+
+	# Logger turn on
+	Jaipo->logger ( Jaipo::Logger->new );
+
+	# prereserve arguments for service plugin
+	# my $args = {
+	#
+	# };
+
+	# we initialize service plugin class here
+	# Set up plugins
+	my @services;
+	my @services_to_load = @{ Jaipo->config->app ('Services') };
+
+	my @plugins;
+	my @plugins_to_load;
+
+	for ( my $i = 0; my $service = $services_to_load[$i]; $i++ ) {
+
+		# Prepare to learn the plugin class name
+		my ($service_name) = keys %{$service};
+		say "Jaipo: Loading " . $service_name;
+
+		my $class;
+
+		# Is the plugin name a fully-qualified class name?
+		if ( $service_name =~ /^Jaipo::Service::/ ) {
+
+   # app-specific plugins use fully qualified names, Jaipo service plugins may
+			$class = $service_name;
+		}
+
+		# otherwise, assume it's a short name, qualify it
+		else {
+			$class = "Jaipo::Service::" . $service_name;
+		}
+
+		# Load the service plugin options
+		my %options = ( %{ $service->{$service_name} } );
+
+		if ( !$options{enable} ) {
+			Jaipo->logger->info ( '%s is disabled', $service_name );
+			next;
+		}
+
+		# Load the service plugin code
+		$self->_try_to_require ($class);
+
+		# Jaipo::ClassLoader->new(base => $class)->require;
+
+		# Initialize the plugin and mark the prerequisites for loading too
+		my $plugin_obj = $class->new (%options);
+		$plugin_obj->init ($caller);
+
+		push @services, $plugin_obj;
+		foreach my $name ( $plugin_obj->prereq_plugins ) {
+			next if grep { $_ eq $name } @plugins_to_load;
+			push @plugins_to_load, { $name => {} };
+		}
+
+	}
+
+	# All plugins loaded, save them for later reference
+	Jaipo->services (@services);
+
+	# XXX: need to implement plugin loader
+
+	# warn "No supported service provider initialled!\n" if not $has_site;
+
+	# when initialize jaipo, there are some new settings that we need to save.
+	Jaipo->config->save;
+	Jaipo->logger->info ('Configuration saved.');
+}
+
+=head2 list_loaded_triggers
+
+=cut
+
+sub list_loaded_triggers {
+	my @services = Jaipo->services;
+	for my $s (@services) {
+		print $s->trigger_name, " => ", ref ($s), "\n";
+	}
+}
+
+=head2 list_triggers
+
+=cut
+
+sub list_triggers {
+	my @service_configs = @{ Jaipo->config->app ('Services') };
+	for my $s (@service_configs) {
+		my @v = values %$s;
+		print $v[0]->{trigger_name}, " => ", join ( q||, keys (%$s) ), "\n";
+	}
+}
+
+=head2 find_service_by_trigger 
+
+=cut
+
+sub find_service_by_trigger {
+	my ( $self, $tg, $services ) = @_;
+	$services ||= [ Jaipo->services ];
+	for my $s (@$services) {
+		my $s_tg = $s->trigger_name;
+		return $s if $s->trigger_name eq $tg;
+	}
+}
+
+=head2 _require
+
+=cut
+
+sub _require {
+	my $self  = shift;
+	my %args  = @_;
+	my $class = $args{module};
+
+	return 1 if $self->_already_required ($class);
+
+	my $file = $class;
+	$file .= '.pm' unless $file =~ /\.pm$/;
+	$file =~ s|::|/|g;
+
+	my $retval = eval { CORE::require "$file" };
+	my $error = $@;
+	if ( my $message = $error ) {
+		$message =~ s/ at .*?\n$//;
+		if ( $args{'quiet'} and $message =~ /^Can't locate $file/ ) {
+			return 0;
+		}
+		elsif ( $error !~ /^Can't locate $file/ ) {
+			die $error;
+		}
+		else {
+
+		   #log->error(sprintf("$message at %s line %d\n", (caller(1))[1,2]));
+			return 0;
+		}
+	}
+}
+
+=head2 _already_required
+
+=cut
+
+sub _already_required {
+	my $self  = shift;
+	my $class = shift;
+	my ($path) = ( $class =~ s|::|/|g );
+	$path .= '.pm';
+	return $INC{$path} ? 1 : 0;
+}
+
+=head2 _try_to_require 
+
+=cut
+
+sub _try_to_require {
+	my $self   = shift;
+	my $module = shift;
+	$self->_require ( module => $module, quiet => 0 );
+}
+
+=head2 find_plugin CLASS_NAME
+
+Find plugins by class name, which is full-qualified class name.
+
+=cut
+
+sub find_plugin {
+	my $self    = shift;
+	my $name    = shift;
+	my @plugins = grep { $_->isa ($name) } Jaipo->plugins;
+	return wantarray ? @plugins : $plugins[0];
+}
+
+=head2 set_plugin_trigger PLUGIN_OBJECT CLASS
+
+=cut
+
+# this may used by runtime_load_service
+sub set_plugin_trigger {
+	my ( $self, $plugin_obj, $options, $class, $services ) = @_;
+
+	# give a trigger to plugin obj , take a look.  :p
+	my $trigger_name;
+	if ( defined $options->{trigger_name} ) {
+		$trigger_name = $options->{trigger_name};
+	}
+
+	else {
+		($trigger_name) = ( $class =~ m/(?<=Service::)(\w+)$/ );
+		$trigger_name = lc $trigger_name;    # lower case
+	}
+
+	# repeat service trigger name
+	while ( my $s
+		= $self->find_service_by_trigger ( $trigger_name, $services ) )
+	{
+
+		# give an another trigger name for it or ask user
+		# TODO: provide a config option to let user set jaipo to ask
+		$trigger_name .= '_';
+	}
+
+	# set trigger name
+	$plugin_obj->trigger_name ($trigger_name);
+	print "set trigger: ", $trigger_name, ' for ', $class, "\n";
+}
+
+=head2 runtime_load_service  CALLER  SERVICE_NAME [TRIGGER_NAME]
+
+if trigger name is specified, and it doesn't exist in config.
+Jaipo will create a new service object, and assign the trigger name to it.
+
+if trigger name is specified, and Jaipo will try to search the service config
+by trigger name and load the service.
+
+if trigger name is not specified. Jaipo will try to find service configs
+by service name. if there are two or more same service, Jaipo will load the 
+default trigger name ( service name in lowcase )
+
+=cut
+
+# XXX: need to re-check logic
+sub runtime_load_service {
+	my ( $self, $caller, $service_name, $trigger_name ) = @_;
+
+	$trigger_name ||= lc $service_name;
+	my $class = "Jaipo::Service::" . ucfirst $service_name;
+
+	my $options = {};
+	my @sp_options
+		= Jaipo->config->find_service_option_by_trigger ($trigger_name);
+
+	# can not find option , set default trigger name and sp_id
+	if ( !@sp_options ) {
+		$options->{trigger_name} = $trigger_name;
+		my $num_rec = Number::RecordLocator->new;
+		$options->{sp_id} = $num_rec->encode ( Jaipo->config->last_sp_cnt );
+	}
+
+	elsif ( scalar @sp_options == 1 ) {
+		$options = $sp_options[0];
+	}
+
+	# XXX:
+	# actually won't happen, config loader will canonicalize the config
+	# service plugin will get it's default trigger namd from service name.
+	else {
+
+	 # find by service name
+	 #       elsif ( scalar @sp_options > 1 ) {
+	 #           # find service by trigger name
+	 #           for my $s (@sp_options) {
+	 #               $options = $s if ( $s->{trigger_name} eq $trigger_name );
+	 #           }
+	 #       }
+	}
+
+	# Load the service plugin code
+	$self->_try_to_require ($class);
+
+	# Jaipo::ClassLoader->new(base => $class)->require;
+
+	my $plugin_obj = $class->new (%$options);
+	$plugin_obj->init ($caller);
+
+	# $self->set_plugin_trigger( $plugin_obj , $class );
+
+	my @services = Jaipo->services;
+	push @services, $plugin_obj;
+	foreach my $name ( $plugin_obj->prereq_plugins ) {
+
+		# next if grep { $_ eq $name } @plugins_to_load;
+		#push @plugins_to_load, {$name => {}};
+	}
+	Jaipo->services (@services);
+
+   # call save configuration here
+   # TODO: this may overwrites other plugins afterload options
+   # make sure that user did config jaipo , or we don't need to rewrite config
+	Jaipo->config->save;
+}
+
+=head2 dispatch_to_service SERVICE_TRIGGER , MESSAGE
+
+command start with C<:[service]> ( e.g. C<:twitter> or C<:plurk> ) something
+like that will call the servcie dispatch method,  service plugin will decide
+what to do with.
+
+=cut
+
+sub dispatch_to_service {
+	my ( $self, $service_tg, $line ) = @_;
+	my $s = $self->_find_service_by_trigger ($service_tg);
+
+}
+
+=head2 action ACTION, PARAM
+
+=cut
+
+sub action {
+	my ( $self, $action, $param ) = @_;
+	my @services = Jaipo->services;
+	foreach my $service (@services) {
+
+		if ( UNIVERSAL::can ( $service, $action ) ) {
+			$service->$action ($param);
+		}
+
+		else {
+
+			# service plugin doesn't support this kind of action
+		}
+	}
+
+}
+
+=head2 set_location SITE
+
+=cut
+
+# need to make sure if service provides set_location function
+sub set_location {
+	my $self     = shift;
+	my $location = shift;
+	my $site     = shift;
+
+	my $rv;
+	my $has_site;
+
+	if ( $site =~ /jaiku/i ) {
+		my $rv = $self->setPresence ( location => $location );
+		$has_site++;
+	}
+
+	warn "Unsupport Site!\n" if not $has_site;
+	return $rv;    # success if not undef
+}
+
+# TODO: use Cache instead of this
+
+=head2 _log_last_id 
+
+=cut
+
+sub _log_last_id {
+	my $self = shift;
+
+	# write those id to a file, so that we can check later
+	if ( not -e "$ENV{HOME}/.jaipo" ) {
+		say "\nThis is the \033[1mfirst time\033[0m you try me?";
+		mkdir ("$ENV{HOME}/.jaipo") or die $!;
+	}
+	if ( not -e "$ENV{HOME}/.jaipo/last-id.log" ) {
+		say "\033[1mThis might be kinda hurt\033[0m..........just kidding :p";
+	}
+	open LOG, ">$ENV{HOME}/.jaipo/last-id.log" or die $!;
+
+	#~ print LOG "$_\n" for @_;
+	#~ print "Current: $_[0]-$_[1]";
+	print LOG "$_[0]-$_[1]";
+	close LOG;
+}
+
+=head2 _compare_last_msg_id
+
+=cut
+
+sub _compare_last_msg_id {
+	my $self = shift;
+
+	# compare the (PostID, CommentID)
+	my @old_id;
+	if (   not -e "$ENV{HOME}/.jaipo"
+		or not -e "$ENV{HOME}/.jaipo/last-id.log" )
+	{
+		say
+			"\nYou \033[1mCan Not\033[0m check about if I have \033[1mAnything NEW For You\033[0m without \033[1mTouching Me First!!\033[0m";
+		say
+			"So Now, Plz read me by using \033[1m \$ jaipo r\033[0m  before you wanna do anything : 3";
+		exit;
+	}
+	open LOG, "<$ENV{HOME}/.jaipo/last-id.log" or die $!;
+	@old_id = split /-/, $_ for <LOG>;
+	close LOG;
+	( $old_id[0] == $_[0] and $old_id[1] == $_[1] ) ? 0 : 1;
+}
+
+=head2 _user_id_key
+
+=cut
+
+=head2 _tabs 
+
+=cut
+
+sub _tabs {
+	my $string = shift;
+	      length $string < 8  ? return "\t\t\t"
+		: length $string < 18 ? return "\t\t"
+		:                       return "\t";
+}
 
 =head1 AUTHOR
 
@@ -49,7 +513,7 @@ automatically be notified of progress on your bug as I make changes.
 
 You can find documentation for this module with the perldoc command.
 
-    perldoc Jaipo
+	perldoc Jaipo
 
 
 You can also look for information at:
@@ -87,4 +551,4 @@ This program is released under the following license: GPL
 
 =cut
 
-1; # End of Jaipo
+1;    # End of Jaipo
