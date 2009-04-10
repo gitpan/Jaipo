@@ -46,6 +46,29 @@ sub new_request {
 
 }
 
+
+sub dispatch_sub_command {
+    my ($self, $sub_command, $rest ) = @_;
+
+    # service 
+    my $builtin_command = {
+        m => 'read_user_timeline',
+        p => 'read_public_timeline',
+        g => 'read_global_timeline',
+        '?' => 'help',
+    };
+
+    if( defined $builtin_command->{ $sub_command } ) {
+        my $func =  $builtin_command->{ $sub_command };
+		$self->$func( $rest );
+    }
+
+    # todo: otherwise we dispatch to service specific command
+}
+
+
+
+
 =head2 prereq_plugins
 
 Returns an array of plugin module names that this plugin depends on.
@@ -103,7 +126,6 @@ global timeline ( out of space !! )
 
 sub read_global_timeline {
 
-
 }
 
 
@@ -130,7 +152,6 @@ sub apply_filter {
 =cut 
 
 sub remove_filter {
-
 
 }
 

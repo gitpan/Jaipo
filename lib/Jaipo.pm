@@ -3,17 +3,18 @@ use warnings;
 use strict;
 use feature qw(:5.10);
 use Jaipo::Config;
+use Jaipo::Notify;
 use Jaipo::Logger;
 use base qw/Class::Accessor::Fast/;
-__PACKAGE__->mk_accessors (qw/config/);
+__PACKAGE__->mk_accessors(qw/config/);
 
-use vars qw/$CONFIG $LOGGER $HANDLER $PUB_SUB @PLUGINS @SERVICES/;
+use vars qw/$NOTIFY $CONFIG $LOGGER $HANDLER $PUB_SUB @PLUGINS @SERVICES/;
 
 =encoding utf8
 
 =head1 NAME
 
-Jaipo - Jaiku (and other micro-blogging sites) Client
+Jaipo - Micro-blogging Client
 
 =head1 VERSION
 
@@ -21,21 +22,22 @@ Version 0.02
 
 =cut
 
-our $VERSION = '0.02';
+our $VERSION = '0.20';
 
 =head1 DESCRIPTION
 
 Jaipo ( 宅噗 )
 
-This project was starting for Jaiku.com, but now going to support as-much-as-we-can micro-blogging sites.
+This project started for Jaiku.com, but now is going to support
+as-much-as-we-can micro-blogging sites.
 
-"Jaiku" pronunced close to "宅窟" in Chinese, which means an area full of computer/internet users, and it really is one of the most popular sites recently. As jaiku is part of google and growing, there're still only few linux client.
+"Jaiku" pronunced close to "宅窟" in Chinese, which means an area full of
+computer/internet users, and it really is one of the most popular sites
+recently. As jaiku is part of google and growing, there're still only few linux
+client.
 
-Jaipo is a lightweight command line Jaiku Client base on RickMeasham's Net::Jaiku perl module.
-
-Bcoz it's writen in perl, so it can run on any OS and any machine with perl. I got the first feedback that somebody use it on ARM embedded system at May 2008.
-
-Now you can read feeds, send message, and set location with Jaipo.
+it's writen in perl, so it can run on any platform that you can get perl on it.
+we got the first feedback that somebody use it on ARM embedded system at May 2008.
 
 =cut
 
@@ -67,6 +69,12 @@ sub config {
 	return $CONFIG;
 }
 
+sub notify {
+	my $class = shift;
+	$NOTIFY ||= Jaipo::Notify->new;
+	return $NOTIFY;
+}
+
 =head2 services
 
 =cut
@@ -83,7 +91,7 @@ sub logger {
 	return $LOGGER;
 }
 
-=head2 init 
+=head2 init CALLER_OBJECT
 
 =cut
 
@@ -98,27 +106,28 @@ sub init {
 	# my $args = {
 	#
 	# };
+    Jaipo->notify;
 
 	# we initialize service plugin class here
 	# Set up plugins
-	my @services;
-	my @services_to_load = @{ Jaipo->config->app ('Services') };
+    my @services;
+    my @services_to_load = @{ Jaipo->config->app ('Services') };
 
-	my @plugins;
-	my @plugins_to_load;
+    my @plugins;
+    my @plugins_to_load;
 
 	for ( my $i = 0; my $service = $services_to_load[$i]; $i++ ) {
 
 		# Prepare to learn the plugin class name
 		my ($service_name) = keys %{$service};
-		say "Jaipo: Loading " . $service_name;
+        say "Jaipo: Init " . $service_name;
 
 		my $class;
 
 		# Is the plugin name a fully-qualified class name?
 		if ( $service_name =~ /^Jaipo::Service::/ ) {
 
-   # app-specific plugins use fully qualified names, Jaipo service plugins may
+            # app-specific plugins use fully qualified names, Jaipo service plugins may
 			$class = $service_name;
 		}
 
@@ -138,8 +147,8 @@ sub init {
 		# Load the service plugin code
 		$self->_try_to_require ($class);
 
-		# Jaipo::ClassLoader->new(base => $class)->require;
-
+        # XXX: if Service don't have trigger_name, we have to do something
+        # 
 		# Initialize the plugin and mark the prerequisites for loading too
 		my $plugin_obj = $class->new (%options);
 		$plugin_obj->init ($caller);
@@ -169,10 +178,10 @@ sub init {
 =cut
 
 sub list_loaded_triggers {
-	my @services = Jaipo->services;
-	for my $s (@services) {
-		print $s->trigger_name, " => ", ref ($s), "\n";
-	}
+    my @services = Jaipo->services;
+    for my $s (@services) {
+        print $s->trigger_name, " => ", ref ($s), "\n";
+    }
 }
 
 =head2 list_triggers
@@ -187,7 +196,7 @@ sub list_triggers {
 	}
 }
 
-=head2 find_service_by_trigger 
+=head2 find_service_by_trigger  TRIGGER_NAME  [ SERVICES ]
 
 =cut
 
@@ -200,7 +209,7 @@ sub find_service_by_trigger {
 	}
 }
 
-=head2 _require
+=head2 _require ( module => MODULE , ... )
 
 =cut
 
@@ -226,14 +235,13 @@ sub _require {
 			die $error;
 		}
 		else {
-
 		   #log->error(sprintf("$message at %s line %d\n", (caller(1))[1,2]));
 			return 0;
 		}
 	}
 }
 
-=head2 _already_required
+=head2 _already_required CLASS_NAME
 
 =cut
 
@@ -245,7 +253,7 @@ sub _already_required {
 	return $INC{$path} ? 1 : 0;
 }
 
-=head2 _try_to_require 
+=head2 _try_to_require CLASS_NAME
 
 =cut
 
@@ -342,7 +350,6 @@ sub runtime_load_service {
 	# actually won't happen, config loader will canonicalize the config
 	# service plugin will get it's default trigger namd from service name.
 	else {
-
 	 # find by service name
 	 #       elsif ( scalar @sp_options > 1 ) {
 	 #           # find service by trigger name
@@ -387,8 +394,20 @@ what to do with.
 
 sub dispatch_to_service {
 	my ( $self, $service_tg, $line ) = @_;
-	my $s = $self->_find_service_by_trigger ($service_tg);
+	my $s = $self->find_service_by_trigger ($service_tg);
+    my ($sub_command) = ($line =~ m[^(\w+)] );
+    $s->dispatch_sub_command( $sub_command , $line );
 
+}
+
+sub cache_clear {
+	my @services = Jaipo->services;
+	foreach my $service (@services) {
+        if( UNIVERSAL::can( $service , 'get_cache' ) ) {
+            my $c = $service->get_cache;
+            $c->clear;
+        }
+	}
 }
 
 =head2 action ACTION, PARAM
@@ -398,104 +417,27 @@ sub dispatch_to_service {
 sub action {
 	my ( $self, $action, $param ) = @_;
 	my @services = Jaipo->services;
-	foreach my $service (@services) {
+    foreach my $service (@services) {
+        if ( UNIVERSAL::can( $service, $action ) ) {
+            my $ret = $service->$action($param);
+            use Data::Dumper::Simple;
+            warn Dumper( $ret );
 
-		if ( UNIVERSAL::can ( $service, $action ) ) {
-			$service->$action ($param);
-		}
+            # XXX:
+            #  - we should check ret->{type} eq 'notification'
+            #  - and call Notify::init
+            if ( ref $ret 
+                and $ret->{type} eq 'notification' 
+                and $ret->{updates} > 0 ) 
+            {
+                Jaipo->notify->create($ret);
+            }
+        }
+        else {
+            # service plugin doesn't support this kind of action
+        }
+    }
 
-		else {
-
-			# service plugin doesn't support this kind of action
-		}
-	}
-
-}
-
-=head2 set_location SITE
-
-=cut
-
-# need to make sure if service provides set_location function
-sub set_location {
-	my $self     = shift;
-	my $location = shift;
-	my $site     = shift;
-
-	my $rv;
-	my $has_site;
-
-	if ( $site =~ /jaiku/i ) {
-		my $rv = $self->setPresence ( location => $location );
-		$has_site++;
-	}
-
-	warn "Unsupport Site!\n" if not $has_site;
-	return $rv;    # success if not undef
-}
-
-# TODO: use Cache instead of this
-
-=head2 _log_last_id 
-
-=cut
-
-sub _log_last_id {
-	my $self = shift;
-
-	# write those id to a file, so that we can check later
-	if ( not -e "$ENV{HOME}/.jaipo" ) {
-		say "\nThis is the \033[1mfirst time\033[0m you try me?";
-		mkdir ("$ENV{HOME}/.jaipo") or die $!;
-	}
-	if ( not -e "$ENV{HOME}/.jaipo/last-id.log" ) {
-		say "\033[1mThis might be kinda hurt\033[0m..........just kidding :p";
-	}
-	open LOG, ">$ENV{HOME}/.jaipo/last-id.log" or die $!;
-
-	#~ print LOG "$_\n" for @_;
-	#~ print "Current: $_[0]-$_[1]";
-	print LOG "$_[0]-$_[1]";
-	close LOG;
-}
-
-=head2 _compare_last_msg_id
-
-=cut
-
-sub _compare_last_msg_id {
-	my $self = shift;
-
-	# compare the (PostID, CommentID)
-	my @old_id;
-	if (   not -e "$ENV{HOME}/.jaipo"
-		or not -e "$ENV{HOME}/.jaipo/last-id.log" )
-	{
-		say
-			"\nYou \033[1mCan Not\033[0m check about if I have \033[1mAnything NEW For You\033[0m without \033[1mTouching Me First!!\033[0m";
-		say
-			"So Now, Plz read me by using \033[1m \$ jaipo r\033[0m  before you wanna do anything : 3";
-		exit;
-	}
-	open LOG, "<$ENV{HOME}/.jaipo/last-id.log" or die $!;
-	@old_id = split /-/, $_ for <LOG>;
-	close LOG;
-	( $old_id[0] == $_[0] and $old_id[1] == $_[1] ) ? 0 : 1;
-}
-
-=head2 _user_id_key
-
-=cut
-
-=head2 _tabs 
-
-=cut
-
-sub _tabs {
-	my $string = shift;
-	      length $string < 8  ? return "\t\t\t"
-		: length $string < 18 ? return "\t\t"
-		:                       return "\t";
 }
 
 =head1 AUTHOR
@@ -514,7 +456,6 @@ automatically be notified of progress on your bug as I make changes.
 You can find documentation for this module with the perldoc command.
 
 	perldoc Jaipo
-
 
 You can also look for information at:
 
